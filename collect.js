@@ -7,7 +7,7 @@
 
   const ROW_RE = /<tr>(.*?)<\/tr>/gs;
   const VIEW_RE = /href="([^"]*internship\/view\?[^"]*?id=(\d+))"/;
-  const TITLE_RE = /class="tit">\s*<p>(.*?)<\/p>/s;
+  const TITLE_RE = /class="tit">.*?<p>(.*?)<\/p>/s; // 새 글이면 <p> 앞에 <span class="new">N</span>이 붙는다
   const CELL_RE = /<td data-th="([^"]+)"[^>]*>(.*?)<\/td>/gs;
   const PAIR_RE = /<th>(.*?)<\/th>\s*<td[^>]*>(.*?)<\/td>/gs;
   const TAG_RE = /<[^>]+>/g;

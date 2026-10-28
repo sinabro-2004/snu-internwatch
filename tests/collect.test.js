@@ -19,6 +19,12 @@ for (const f of ["list1.html", "list2.html"]) {
   });
 }
 
+test("parseList: 제목 앞에 새 글 배지(N)가 붙은 공고도 뽑는다(실측 10-28: 1쪽 10건 전부 배지)", () => {
+  const html = fx("list1.html").replace(/(id=92295" class="tit">)/, '$1\n<span class="new">N</span>');
+  const got = C.parseList(html).map((p) => pick(p, LIST_KEYS));
+  assert.deepEqual(got, golden.lists["list1.html"].map((p) => pick(p, LIST_KEYS)));
+});
+
 test("parseList: 목록 표가 없으면(로그인 페이지 등) 구조 변경으로 알린다", () => {
   assert.throws(() => C.parseList("<html><body>로그인</body></html>"), /t_list/);
 });
