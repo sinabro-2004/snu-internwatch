@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SNU InternWatch 설치</title>
+<style>
+  :root { --bg: #fafaf8; --fg: #1d1d1b; --muted: #5f5f5a; --line: #deded8; --accent: #0f5fa8; --card: #fff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161615; --fg: #ecece8; --muted: #a3a39c; --line: #34342f; --accent: #6aa9e8; --card: #1f1f1d; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.65 "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif; }
+  main { max-width: 680px; margin: 0 auto; padding: 48px 16px 64px; }
+  h1 { font-size: 28px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); margin: 0 0 32px; }
+  .drag { display: inline-block; padding: 12px 22px; border-radius: 10px; background: var(--accent); color: #fff;
+    font-weight: 700; text-decoration: none; cursor: grab; }
+  .hint { color: var(--muted); font-size: 14px; margin: 10px 0 36px; }
+  ol { padding-left: 22px; margin: 0; }
+  li { margin: 0 0 14px; }
+  h2 { font-size: 18px; margin: 36px 0 12px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; }
+  code { font-size: 14px; }
+  a { color: var(--accent); }
+  footer { margin-top: 40px; color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>SNU InternWatch</h1>
+  <p class="sub">경력개발센터 인턴 공고를 모아 내 기준으로 골라 주는 북마크 + ChatGPT Edu GPT</p>
+
+  <a class="drag" title="북마크바로 끌어다 놓으세요"
+     href="javascript:(function(){var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/gh/sinabro-2004/snu-internwatch@v0.1.0/collect.js';s.charset='utf-8';document.body.appendChild(s);})();">InternWatch 수집</a>
+  <p class="hint">이 버튼을 북마크바로 끌어다 놓으세요. 여기서 누르면 아무 일도 일어나지 않습니다.
+    북마크바가 안 보이면 <code>Ctrl + Shift + B</code>.</p>
+
+  <h2>쓰는 법</h2>
+  <div class="card">
+    <ol>
+      <li><a href="https://career.snu.ac.kr">경력개발센터</a>에 로그인한 탭에서 북마크를 누릅니다.</li>
+      <li>새 공고가 <code>인턴공고_날짜_1ofN.md</code>(20건씩)로, 본문이 이미지뿐인 공고는 <code>포스터_날짜.pdf</code>로 묶입니다. 화면의 "받기"로 내려받습니다.</li>
+      <li>InternWatch GPT에 파일을 올리고 "판정해줘"라고 보냅니다. 처음이면 "기준 만들기"부터 — 질문 7개로 내 기준 파일을 만들어 줍니다.</li>
+    </ol>
+  </div>
+
+  <h2>개인정보</h2>
+  <p>스크립트는 내 브라우저 안에서만 돌고, 어디로도 데이터를 보내지 않습니다. 본 공고 기록은 그 브라우저에만 남습니다.
+    파일을 GPT에 올리는 건 직접 합니다.</p>
+
+  <footer>소스·판정 검증 결과: <a href="https://github.com/sinabro-2004/snu-internwatch">github.com/sinabro-2004/snu-internwatch</a></footer>
+</main>
+</body>
+</html>
