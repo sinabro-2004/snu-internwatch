@@ -5,7 +5,7 @@
 
   const BASE = "https://career.snu.ac.kr";
 
-  const ROW_RE = /<tr>(.*?)<\/tr>/gs;
+  const ROW_RE = /<tr\b[^>]*>(.*?)<\/tr>/gs;
   const VIEW_RE = /href="([^"]*internship\/view\?[^"]*?id=(\d+))"/;
   const TITLE_RE = /class="tit">.*?<p>(.*?)<\/p>/s; // 새 글이면 <p> 앞에 <span class="new">N</span>이 붙는다
   const CELL_RE = /<td data-th="([^"]+)"[^>]*>(.*?)<\/td>/gs;
@@ -21,7 +21,7 @@
     return s.replace(/&(#[xX][0-9a-fA-F]+|#\d+|[a-zA-Z]+);/g, (m, e) => {
       if (e[0] === "#") {
         const n = e[1] === "x" || e[1] === "X" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
-        return String.fromCodePoint(n);
+        return n <= 0x10ffff ? String.fromCodePoint(n) : "�"; // 범위 밖 코드는 대체 문자 — 한 공고 때문에 수집이 멈추지 않게
       }
       return ENTITIES[e] ?? m;
     });
@@ -42,6 +42,7 @@
   }
 
   function absolute(u) {
+    if (u.startsWith("//")) return "https:" + u; // 프로토콜 생략 주소(다른 사이트 이미지)
     return u.startsWith("http") ? u : BASE + u;
   }
 
@@ -64,7 +65,15 @@
         category: cells["기업분류"] ?? "", posted: cells["작성일"] ?? "", deadline: cells["마감일"] ?? "",
       });
     }
+    // 공고 링크 수보다 적게 읽었으면 "새 공고 없음"이 아니라 구조가 바뀐 것이다(10-28: 새 글 배지로 0건이 된 적 있음)
+    const links = [...tbody.matchAll(ROW_RE)].filter(([, row]) => VIEW_RE.test(row)).length;
+    if (out.length < links) throw new Error(`목록 ${links}건 중 ${out.length}건만 읽음 — 페이지 구조가 바뀌었을 수 있음`);
     return out;
+  }
+
+  // 상세 페이지인지 — 오류 화면·점검 안내도 HTTP 200으로 올 수 있어서 상세 표가 있는지로 본다
+  function isDetailPage(s) {
+    return s.includes('class="t_view"');
   }
 
   // 상세 페이지 → 목록에 없는 정보. 회사·마감은 상세 표에 있을 때만 돌려준다(목록 값을 덮어쓴다)
@@ -112,6 +121,8 @@
 
   // 새 공고를 모아 상세까지 채운다. fetchText(url) → HTML, sleep(ms)은 바깥에서 넣는다(브라우저·테스트 공용).
   // seen: 예전에 받은 공고 id. today: "YYYY-MM-DD". 돌려주는 skipped(마감 지남)도 seen에 넣으면 된다.
+  // failed(상세를 못 받음)는 seen에 넣지 않는다 — 다음 실행 때 다시 받는다.
+  // reachedLimit: maxPages쪽까지 새 공고가 이어져서 그보다 오래된 공고는 안 봤다
   async function collect({ fetchText, sleep, seen, today, maxPages = 10, interval = 1500, onProgress = () => {} }) {
     async function get(url) {
       const s = await fetchText(url);
@@ -122,21 +133,41 @@
     const taken = new Set(seen);
     const fresh = [];
     const skipped = [];
+    let reachedLimit = false;
     for (let page = 1; page <= maxPages; page++) {
       onProgress(`목록 ${page}쪽 확인 중`);
       const rows = parseList(await get(LIST_URL + page)).filter((p) => !taken.has(p.id));
       if (!rows.length) break; // 한 쪽이 전부 본 공고면 그 뒤도 본 것
+      if (page === maxPages) reachedLimit = true;
       for (const p of rows) {
         taken.add(p.id);
         if (expired(p.deadline, today)) skipped.push({ ...p, reason: `마감 지남(${p.deadline})` });
         else fresh.push(p);
       }
     }
+    const postings = [];
+    const failed = [];
     for (const [i, p] of fresh.entries()) {
       onProgress(`상세 ${i + 1}/${fresh.length} 받는 중`);
-      Object.assign(p, parseDetail(await get(p.url)));
+      let s;
+      try {
+        s = await get(p.url);
+      } catch (e) {
+        if (/로그인/.test(e.message)) throw e; // 로그인이 풀리면 나머지도 다 실패한다 — 멈춘다
+        failed.push({ ...p, reason: e.message });
+        continue;
+      }
+      if (!isDetailPage(s)) {
+        failed.push({ ...p, reason: "상세 표가 없는 페이지(오류 화면이거나 구조 변경)" });
+        continue;
+      }
+      try {
+        postings.push(Object.assign(p, parseDetail(s)));
+      } catch (e) {
+        failed.push({ ...p, reason: "상세 읽기 오류: " + e.message });
+      }
     }
-    return { postings: fresh, skipped };
+    return { postings, skipped, failed, reachedLimit };
   }
 
   const SHOW_FIELDS = ["업종", "직종", "채용형태", "근무지역", "채용URL"];
@@ -232,8 +263,25 @@
     if (posters.length) lines.push(`- 포스터 파일: ${posters.map((t) => t.name).join(", ")} (포스터 PDF에서 이 이름이 적힌 쪽 — 함께 올렸으면 본문으로 본다)`);
     const body = p.body || "";
     lines.push("", "### 본문", body ? body.slice(0, bodyChars) : "(본문 텍스트 없음)");
-    if (body.length > bodyChars) lines.push(`(본문 ${body.length}자 중 앞 ${bodyChars}자)`);
+    if (body.length > bodyChars) {
+      lines.push(`(본문 ${body.length}자 중 앞 ${bodyChars}자)`);
+      const kept = conditionLines(body.slice(bodyChars));
+      if (kept) lines.push("", "### 잘린 뒷부분에서 옮긴 자격·조건 줄", kept);
+    }
     return lines.join("\n");
+  }
+
+  // 잘린 뒷부분에서 판정에 쓰는 줄(자격·학력·근무 조건)만 골라 옮긴다 — 긴 공고는 자격요건이 뒤에 있다
+  const CONDITION_RE = /자격|요건|우대|학력|학년|학기|졸업|재학|휴학|전공|어학|근무\s*(지|기간|형태|시간|조건)|기간|채용\s*형태|전환|Qualif|Require|Eligib|graduat|student|degree/i;
+  function conditionLines(rest, max = 1500) {
+    const out = [];
+    let size = 0;
+    for (const ln of rest.split("\n")) {
+      if (!CONDITION_RE.test(ln) || size + ln.length > max) continue;
+      out.push(ln);
+      size += ln.length;
+    }
+    return out.join("\n");
   }
 
   // GPT에 올릴 마크다운 파일들. 큰 파일은 GPT가 일부만 읽을 수 있어서 size건씩 나누고,
@@ -272,6 +320,16 @@
 
   function saveSeen(seen) {
     localStorage.setItem(SEEN_KEY, JSON.stringify([...seen]));
+  }
+
+  // 마지막으로 만든 파일과 포스터 목록. v0.1.1까지는 파일 배열만 저장했다
+  function loadLast() {
+    try {
+      const v = JSON.parse(localStorage.getItem(LAST_KEY) || "[]");
+      return Array.isArray(v) ? { date: "", files: v, posters: [] } : v;
+    } catch {
+      return { date: "", files: [], posters: [] };
+    }
   }
 
   function panel() {
@@ -366,23 +424,24 @@
     note.style.cssText = "font-size:12px;color:#666";
     note.textContent = `본문이 이미지뿐인 공고의 포스터 ${targets.length}장. 공고 파일과 함께 GPT에 올리면 포스터도 읽고 판정합니다.`;
     const name = `포스터_${date}.pdf`;
+    const done = new Map(); // 포스터 이름 → 조각들. 다시 시도할 땐 실패한 것만 받는다
     const b = button(`포스터 PDF 받기 (${targets.length}장)`, async () => {
       b.disabled = true;
-      const pages = [];
-      const failed = [];
-      for (const [i, t] of targets.entries()) {
-        b.textContent = `포스터 ${i + 1}/${targets.length} 처리 중`;
+      const todo = targets.filter((t) => !done.has(t.name));
+      for (const [i, t] of todo.entries()) {
+        b.textContent = `포스터 ${i + 1}/${todo.length} 처리 중`;
         try {
-          pages.push(...(await posterTiles(t)));
-        } catch {
-          failed.push(t.name);
-        }
-        await new Promise((done) => setTimeout(done, 500));
+          done.set(t.name, await posterTiles(t));
+        } catch {} // 실패는 아래에서 모아 알린다
+        await new Promise((ok) => setTimeout(ok, 500));
       }
+      const pages = targets.flatMap((t) => done.get(t.name) || []);
+      const failed = targets.filter((t) => !done.has(t.name)).map((t) => t.name);
       if (pages.length) saveBlob(new Blob([jpegsToPdf(pages)], { type: "application/pdf" }), name);
-      b.textContent = pages.length ? `${name} 받음 (${pages.length}쪽)` : "포스터를 하나도 받지 못했습니다";
-      b.disabled = pages.length > 0;
-      if (failed.length) note.textContent = `못 받은 포스터(다른 사이트 이미지): ${failed.join(", ")} — GPT가 '직접 확인'으로 남깁니다.`;
+      b.textContent = failed.length ? `못 받은 ${failed.length}장 다시 시도` : `${name} 받음 (${pages.length}쪽)`;
+      b.disabled = !failed.length;
+      if (failed.length) note.textContent = `못 받은 포스터: ${failed.join(", ")}` + (pages.length ? ` (나머지 ${pages.length}쪽은 PDF로 받음)` : "") +
+        ". GPT는 PDF에 쪽이 없는 공고를 '직접 확인'으로 둡니다.";
     });
     row.append(b, note);
     ui.box.querySelector("[data-files]").appendChild(row);
@@ -416,28 +475,39 @@
       const seen = loadSeen();
       const today = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10); // 한국 날짜
       const r = await collect({
-        fetchText: async (url) => (await fetch(url, { credentials: "same-origin" })).text(),
+        fetchText: async (url) => {
+          const res = await fetch(url, { credentials: "same-origin" });
+          if (res.url.includes(LOGIN_MARK)) throw new Error("로그인이 풀렸습니다. 경력개발센터에 다시 로그인한 뒤 실행해 주세요.");
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return res.text();
+        },
         sleep: (ms) => new Promise((ok) => setTimeout(ok, ms)),
         seen, today, onProgress: ui.msg,
       });
-      for (const p of [...r.postings, ...r.skipped]) seen.add(p.id);
+      for (const p of [...r.postings, ...r.skipped]) seen.add(p.id); // failed는 넣지 않는다 — 다음에 다시 받는다
       saveSeen(seen);
+      const notes = [];
+      if (r.skipped.length) notes.push(`마감 지난 ${r.skipped.length}건 건너뜀`);
+      if (r.failed.length) notes.push(`상세를 못 받은 ${r.failed.length}건은 다음 실행 때 다시 받음`);
+      if (r.reachedLimit) notes.push("최근 10쪽까지만 봤습니다 — 더 오래된 공고는 사이트에서 직접 확인하세요");
+      const tail = notes.length ? ` (${notes.join(" · ")})` : "";
       if (!r.postings.length) {
-        ui.msg(`새 공고가 없습니다${r.skipped.length ? ` (마감 지난 ${r.skipped.length}건은 건너뜀)` : ""}.`);
-        const last = JSON.parse(localStorage.getItem(LAST_KEY) || "[]");
-        if (last.length) {
-          ui.box.querySelector("[data-files]").append("지난번 파일:");
-          showFiles(ui, last);
+        ui.msg(`새 공고가 없습니다${tail}.`);
+        const last = loadLast();
+        if (last.files.length) {
+          ui.box.querySelector("[data-files]").append(`지난번(${last.date}) 파일:`);
+          showFiles(ui, last.files);
+          showPosters(ui, last.posters, last.date);
         }
       } else {
         const files = toFiles(r.postings, { date: today });
+        const posters = posterTargets(r.postings);
         try {
-          localStorage.setItem(LAST_KEY, JSON.stringify(files));
+          localStorage.setItem(LAST_KEY, JSON.stringify({ date: today, files, posters }));
         } catch {} // 용량 초과면 보관만 건너뛴다
-        ui.msg(`새 공고 ${r.postings.length}건${r.skipped.length ? `, 마감 지난 ${r.skipped.length}건 건너뜀` : ""}. ` +
-          "파일을 받아 InternWatch GPT에 올리고 \"판정해줘\"라고 보내세요.");
+        ui.msg(`새 공고 ${r.postings.length}건${tail}. 파일을 받아 InternWatch GPT에 올리고 "판정해줘"라고 보내세요.`);
         showFiles(ui, files);
-        showPosters(ui, posterTargets(r.postings), today);
+        showPosters(ui, posters, today);
       }
       showReset(ui);
     } catch (e) {

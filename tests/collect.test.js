@@ -47,8 +47,29 @@ for (const f of ["detail.html", "detail_poster.html"]) {
   });
 }
 
+test("parseList: <tr>에 속성이 붙어도 공고를 뽑는다", () => {
+  const html = fx("list1.html").replace(/<tr>/g, '<tr class="row">');
+  assert.deepEqual(C.parseList(html).map((p) => p.id), golden.lists["list1.html"].map((p) => p.id));
+});
+
+test("parseList: 공고 링크가 있는데 제목을 못 읽으면 '공고 없음'이 아니라 구조 변경 오류를 낸다", () => {
+  const html = fx("list1.html").replace(/class="tit"/g, 'class="title"');
+  assert.throws(() => C.parseList(html), /구조/);
+});
+
+test("parseDetail: //로 시작하는 이미지 주소는 https: 를 붙인다(사이트 주소에 이어 붙이지 않는다)", () => {
+  const html = '<div class="con_box"><img src="//cdn.example.org/p.jpg"></div>';
+  assert.deepEqual(C.parseDetail(html).image_urls, ["https://cdn.example.org/p.jpg"]);
+});
+
+test("parseDetail: 범위를 벗어난 숫자 엔티티(&#1114112;)가 있어도 멈추지 않는다", () => {
+  const html = '<div class="con_box">가&#1114112;나</div>';
+  assert.match(C.parseDetail(html).body, /가.나/);
+});
+
 // 가짜 사이트: 목록 1·2쪽은 픽스처, 3쪽부터는 1쪽을 다시 준다(실제 게시판은 끝없이 이어진다). 상세는 모두 detail.html
-function fakeSite({ login = false } = {}) {
+// broken: 이 id들의 상세는 오류 화면을 준다. httpError: 이 id들의 상세는 fetchText가 HTTP 오류를 던진다
+function fakeSite({ login = false, broken = [], httpError = [] } = {}) {
   const calls = [];
   const pages = { 1: fx("list1.html"), 2: fx("list2.html") };
   const fetchText = async (url) => {
@@ -56,6 +77,9 @@ function fakeSite({ login = false } = {}) {
     if (login) return '<script>location.href="/student/login/login?returnUrl=x"</script>';
     const page = url.match(/internship\?page=(\d+)/);
     if (page) return pages[page[1]] ?? pages[1];
+    const id = url.match(/[?&]id=(\d+)/)?.[1];
+    if (httpError.includes(id)) throw new Error("HTTP 500");
+    if (broken.includes(id)) return "<html><body><h1>일시적인 오류입니다</h1></body></html>";
     if (url.includes("internship/view")) return fx("detail.html");
     throw new Error("예상 밖 URL " + url);
   };
@@ -95,6 +119,24 @@ test("collect: 로그인 페이지로 튕기면 로그인 안내 오류를 낸�
   await assert.rejects(C.collect({ ...site, seen: new Set(), today: "2026-10-12", maxPages: 2 }), /로그인/);
 });
 
+test("collect: 상세가 오류 화면이거나 HTTP 오류면 수집 성공으로 치지 않고 failed로 돌려준다(다음 실행 때 다시 받게)", async () => {
+  const [a, b] = listIds("list1.html");
+  const site = fakeSite({ broken: [a], httpError: [b] });
+  const r = await C.collect({ ...site, seen: new Set(), today: "2026-10-01", maxPages: 1 }); // 마감 지난 공고 없게
+  assert.ok(!ids(r.postings).includes(a) && !ids(r.postings).includes(b));
+  assert.deepEqual(ids(r.failed), [a, b]);
+  assert.match(r.failed[0].reason, /구조|상세/);
+  assert.match(r.failed[1].reason, /HTTP 500/);
+});
+
+test("collect: 쪽 한도까지 새 공고가 이어지면 더 오래된 공고를 안 봤다고 알린다", async () => {
+  const site = fakeSite();
+  const full = await C.collect({ ...site, seen: new Set(), today: "2026-10-01", maxPages: 1 });
+  assert.equal(full.reachedLimit, true);
+  const stop = await C.collect({ ...fakeSite(), seen: new Set(listIds("list2.html")), today: "2026-10-01", maxPages: 5 });
+  assert.equal(stop.reachedLimit, false);
+});
+
 async function collected() {
   return (await C.collect({ ...fakeSite(), seen: new Set(), today: "2026-10-12", maxPages: 2 })).postings;
 }
@@ -129,6 +171,16 @@ test("toFiles: 공고마다 제목·회사·마감·링크·본문을 담고, �
   for (const s of [p.title, p.company, p.deadline, p.url, p.fields["근무지역"], p.body.slice(0, 100)]) assert.ok(text.includes(s), s);
   assert.ok(!text.includes(p.body.slice(0, 101)));
   assert.match(text, new RegExp(`본문 ${p.body.length}자 중 앞 100자`));
+});
+
+test("toFiles: 본문을 자를 때 잘린 뒷부분의 자격·조건 줄은 따로 옮긴다(5000자 뒤 학력 조건이 사라지던 문제)", () => {
+  const body = "회사 소개 " + "가".repeat(200) + "\n담당 업무: 투자 검토\n" + "나".repeat(200) +
+    "\n지원자격: 4년제 대학 졸업예정자\n우대사항: CFA\n문의: hr@example.com";
+  const p = { id: "1", title: "t", url: "u", body };
+  const text = C.toFiles([p], { date: "2026-10-28", bodyChars: 100 })[0].text;
+  assert.match(text, /지원자격: 4년제 대학 졸업예정자/);
+  assert.match(text, /우대사항: CFA/);
+  assert.ok(!text.includes("문의: hr@example.com"));
 });
 
 test("toFiles: 본문 이미지·첨부가 있으면 개수를 적는다", () => {

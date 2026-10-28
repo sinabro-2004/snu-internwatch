@@ -33,7 +33,7 @@
   <p class="sub">경력개발센터 인턴 공고를 모아 내 기준으로 골라 주는 북마크 + ChatGPT Edu GPT</p>
 
   <a class="drag" title="북마크바로 끌어다 놓으세요"
-     href="javascript:(function(){var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/gh/sinabro-2004/snu-internwatch@v0.1.1/collect.js';s.charset='utf-8';document.body.appendChild(s);})();">InternWatch 수집</a>
+     href="javascript:(function(){var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/gh/sinabro-2004/snu-internwatch@v0.1.2/collect.js';s.integrity='sha384-C/UECEZL3ms3QNB0IZE/vjYybw3vHBCVjZXeyeOwyQY7tm7f1+3MLoRW2sI8Wv7M';s.crossOrigin='anonymous';s.charset='utf-8';s.onerror=function(){alert('InternWatch 스크립트를 불러오지 못했거나 검증에 실패했습니다. 설치 페이지에서 북마크를 다시 받아 주세요.')};document.body.appendChild(s);})();">InternWatch 수집</a>
   <p class="hint">이 버튼을 북마크바로 끌어다 놓으세요. 여기서 누르면 아무 일도 일어나지 않습니다.
     북마크바가 안 보이면 <code>Ctrl + Shift + B</code>.</p>
 
@@ -42,13 +42,15 @@
     <ol>
       <li><a href="https://career.snu.ac.kr">경력개발센터</a>에 로그인한 탭에서 북마크를 누릅니다.</li>
       <li>새 공고가 <code>인턴공고_날짜_1ofN.md</code>(20건씩)로, 본문이 이미지뿐인 공고는 <code>포스터_날짜.pdf</code>로 묶입니다. 화면의 "받기"로 내려받습니다.</li>
-      <li>InternWatch GPT에 파일을 올리고 "판정해줘"라고 보냅니다. 처음이면 "기준 만들기"부터 — 질문 7개로 내 기준 파일을 만들어 줍니다.</li>
+      <li><a href="https://chatgpt.com/g/g-6adf300a445481c2ad2a1cab74cb40d1-snu-internwatch">InternWatch GPT</a>(서울대 ChatGPT Edu 계정)에 파일을 올리고 "판정해줘"라고 보냅니다. 처음이면 "기준 만들기"부터 — 질문 7개로 내 기준 파일을 만들어 줍니다.</li>
     </ol>
   </div>
+  <p class="hint">한 번에 최근 10쪽(약 100건)까지 봅니다. 상세 페이지를 못 받은 공고는 다음 실행 때 다시 받습니다.</p>
 
   <h2>개인정보</h2>
-  <p>스크립트는 내 브라우저 안에서만 돌고, 어디로도 데이터를 보내지 않습니다. 본 공고 기록은 그 브라우저에만 남습니다.
-    파일을 GPT에 올리는 건 직접 합니다.</p>
+  <p>스크립트는 내 브라우저 안에서 돌고, 공고 내용이나 기준 파일을 별도 서버로 보내지 않습니다.
+    스크립트 파일(jsDelivr), 경력개발센터 페이지, 공고의 포스터 이미지를 불러오는 요청만 나갑니다.
+    북마크는 고정된 버전을 해시(SRI)로 검증한 뒤에만 실행합니다. 본 공고 기록은 그 브라우저에만 남고, 파일을 GPT에 올리는 건 직접 합니다.</p>
 
   <footer>소스·판정 검증 결과: <a href="https://github.com/sinabro-2004/snu-internwatch">github.com/sinabro-2004/snu-internwatch</a></footer>
 </main>
