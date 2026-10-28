@@ -33,6 +33,10 @@ const postings = [
   { id: "90008", title: "[거너캐피탈] 투자심사 인턴", company: "거너캐피탈", category: "중소기업",
     deadline: "2099-11-30", posted: "2099-11-06", fields: { 근무지역: "서울", 채용형태: "인턴" },
     body: "", images: 1, image_urls: ["https://career.snu.ac.kr/upload/poster_90008.jpg"] },
+  // 포스터 2장 중 1장만 PDF에 들어간 공고(포스터 일부를 못 받은 경우) — make_posters.py가 1장만 만든다
+  { id: "90009", title: "[너더인베스트] VC 심사역 인턴", company: "너더인베스트", category: "중소기업",
+    deadline: "2099-11-30", posted: "2099-11-06", fields: { 근무지역: "서울", 채용형태: "인턴" },
+    body: "", images: 2, image_urls: ["https://career.snu.ac.kr/upload/poster_90009_a.jpg", "https://career.snu.ac.kr/upload/poster_90009_b.jpg"] },
 ].map((p) => ({ ...p, url: link(p.id) }));
 
 const [file] = toFiles(postings, { date: "2099-11-06" });

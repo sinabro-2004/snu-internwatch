@@ -129,6 +129,29 @@ test("collect: 상세가 오류 화면이거나 HTTP 오류면 수집 성공으�
   assert.match(r.failed[1].reason, /HTTP 500/);
 });
 
+test("collect: 상세 표는 있는데 본문 칸이 없으면(구조 변경) 빈 본문으로 성공 처리하지 않는다", async () => {
+  const [a] = listIds("list1.html");
+  const site = fakeSite();
+  const base = site.fetchText;
+  site.fetchText = async (url) => {
+    const s = await base(url);
+    return url.includes(`id=${a}`) ? s.replace(/class="con_box/g, 'class="content_box') : s;
+  };
+  const r = await C.collect({ ...site, seen: new Set(), today: "2026-10-01", maxPages: 1 });
+  assert.deepEqual(ids(r.failed), [a]);
+});
+
+test("collect: 지난번 상세를 못 받은 공고(retry)는 목록 앞쪽이 전부 본 공고여도 다시 받는다(2쪽 이후 공고)", async () => {
+  const late = listIds("list2.html")[0];
+  const first = await C.collect({ ...fakeSite({ httpError: [late] }), seen: new Set(), today: "2026-10-01", maxPages: 2 });
+  assert.deepEqual(ids(first.failed), [late]);
+  const seen = new Set([...first.postings, ...first.skipped].map((p) => p.id));
+  const site = fakeSite();
+  const again = await C.collect({ ...site, seen, retry: first.failed, today: "2026-10-01", maxPages: 2 });
+  assert.deepEqual(ids(again.postings), [late]);
+  assert.deepEqual(again.failed, []);
+});
+
 test("collect: 쪽 한도까지 새 공고가 이어지면 더 오래된 공고를 안 봤다고 알린다", async () => {
   const site = fakeSite();
   const full = await C.collect({ ...site, seen: new Set(), today: "2026-10-01", maxPages: 1 });
@@ -175,12 +198,27 @@ test("toFiles: 공고마다 제목·회사·마감·링크·본문을 담고, �
 
 test("toFiles: 본문을 자를 때 잘린 뒷부분의 자격·조건 줄은 따로 옮긴다(5000자 뒤 학력 조건이 사라지던 문제)", () => {
   const body = "회사 소개 " + "가".repeat(200) + "\n담당 업무: 투자 검토\n" + "나".repeat(200) +
-    "\n지원자격: 4년제 대학 졸업예정자\n우대사항: CFA\n문의: hr@example.com";
+    "\n지원자격: 4년제 대학 졸업예정자\n우대사항: CFA\n" + ["다", "라", "마"].map((c) => c.repeat(30)).join("\n") +
+    "\n문의: hr@example.com"; // 문의 줄은 자격 줄에서 3줄 떨어져 있다(바로 뒤 2줄은 예외 문장일 수 있어 함께 옮긴다)
   const p = { id: "1", title: "t", url: "u", body };
   const text = C.toFiles([p], { date: "2026-10-28", bodyChars: 100 })[0].text;
   assert.match(text, /지원자격: 4년제 대학 졸업예정자/);
   assert.match(text, /우대사항: CFA/);
   assert.ok(!text.includes("문의: hr@example.com"));
+});
+
+test("toFiles: 자격 줄을 옮길 때 바로 뒤의 예외·단서 문장도 함께 옮긴다(제한만 남아 원문보다 강해지지 않게)", () => {
+  const body = "가".repeat(120) + "\n지원자격: 졸업예정자 또는 기졸업자\n예외: 위 사항을 충족하지 않아도 지원할 수 있습니다.\n" +
+    "나".repeat(50) + "\n문의: hr@example.com";
+  const text = C.toFiles([{ id: "1", title: "t", url: "u", body }], { date: "2026-10-28", bodyChars: 100 })[0].text;
+  assert.match(text, /지원자격: 졸업예정자 또는 기졸업자\n예외: 위 사항을 충족하지 않아도 지원할 수 있습니다/);
+});
+
+test("toFiles: 포스터로 받는 이미지가 일부뿐이면 몇 장 중 몇 장인지 적는다", () => {
+  const p = { id: "7", title: "t", url: "u", body: "", images: 5, image_urls: [1, 2, 3, 4, 5].map((i) => `https://x/${i}.jpg`) };
+  const text = C.toFiles([p], { date: "2026-10-28" })[0].text;
+  assert.match(text, /포스터 파일: 포스터_7_1, 포스터_7_2, 포스터_7_3/);
+  assert.match(text, /이미지 5장 중 3장만/);
 });
 
 test("toFiles: 본문 이미지·첨부가 있으면 개수를 적는다", () => {

@@ -71,9 +71,9 @@
     return out;
   }
 
-  // 상세 페이지인지 — 오류 화면·점검 안내도 HTTP 200으로 올 수 있어서 상세 표가 있는지로 본다
+  // 상세 페이지인지 — 오류 화면·점검 안내도 HTTP 200으로 올 수 있어서 상세 표와 본문 칸이 다 있는지로 본다
   function isDetailPage(s) {
-    return s.includes('class="t_view"');
+    return s.includes('class="t_view"') && s.includes('class="con_box');
   }
 
   // 상세 페이지 → 목록에 없는 정보. 회사·마감은 상세 표에 있을 때만 돌려준다(목록 값을 덮어쓴다)
@@ -121,9 +121,10 @@
 
   // 새 공고를 모아 상세까지 채운다. fetchText(url) → HTML, sleep(ms)은 바깥에서 넣는다(브라우저·테스트 공용).
   // seen: 예전에 받은 공고 id. today: "YYYY-MM-DD". 돌려주는 skipped(마감 지남)도 seen에 넣으면 된다.
-  // failed(상세를 못 받음)는 seen에 넣지 않는다 — 다음 실행 때 다시 받는다.
+  // failed(상세를 못 받음)는 seen에 넣지 않고 따로 보관했다가 다음 실행에 retry로 넘긴다 — 목록은 1쪽이 전부 본 공고면
+  // 멈추므로, 2쪽 이후의 실패 공고는 목록으로는 다시 못 만난다.
   // reachedLimit: maxPages쪽까지 새 공고가 이어져서 그보다 오래된 공고는 안 봤다
-  async function collect({ fetchText, sleep, seen, today, maxPages = 10, interval = 1500, onProgress = () => {} }) {
+  async function collect({ fetchText, sleep, seen, today, retry = [], maxPages = 10, interval = 1500, onProgress = () => {} }) {
     async function get(url) {
       const s = await fetchText(url);
       if (s.slice(0, 1000).includes(LOGIN_MARK)) throw new Error("로그인이 풀렸습니다. 경력개발센터에 다시 로그인한 뒤 실행해 주세요.");
@@ -133,6 +134,13 @@
     const taken = new Set(seen);
     const fresh = [];
     const skipped = [];
+    for (const p of retry) {
+      if (taken.has(p.id)) continue;
+      taken.add(p.id);
+      const { reason, ...rest } = p; // 지난번 실패 사유는 버리고 다시 받는다
+      if (expired(p.deadline || "", today)) skipped.push({ ...rest, reason: `마감 지남(${p.deadline})` });
+      else fresh.push(rest);
+    }
     let reachedLimit = false;
     for (let page = 1; page <= maxPages; page++) {
       onProgress(`목록 ${page}쪽 확인 중`);
@@ -260,7 +268,9 @@
     const extra = [p.images && `본문 이미지 ${p.images}개`, p.attachments && `첨부 ${p.attachments}개`].filter(Boolean);
     if (extra.length) lines.push(`- ${extra.join(", ")} (내용은 이 파일에 없음 — 링크에서 확인)`);
     const posters = posterNames(p);
-    if (posters.length) lines.push(`- 포스터 파일: ${posters.map((t) => t.name).join(", ")} (포스터 PDF에서 이 이름이 적힌 쪽 — 함께 올렸으면 본문으로 본다)`);
+    const allImages = (p.image_urls || []).length;
+    const part = posters.length && allImages > posters.length ? `, 이미지 ${allImages}장 중 ${posters.length}장만 — 나머지는 링크에서 확인` : "";
+    if (posters.length) lines.push(`- 포스터 파일: ${posters.map((t) => t.name).join(", ")} (포스터 PDF에서 이 이름이 적힌 쪽 — 함께 올렸으면 본문으로 본다${part})`);
     const body = p.body || "";
     lines.push("", "### 본문", body ? body.slice(0, bodyChars) : "(본문 텍스트 없음)");
     if (body.length > bodyChars) {
@@ -271,15 +281,29 @@
     return lines.join("\n");
   }
 
-  // 잘린 뒷부분에서 판정에 쓰는 줄(자격·학력·근무 조건)만 골라 옮긴다 — 긴 공고는 자격요건이 뒤에 있다
+  // 잘린 뒷부분에서 판정에 쓰는 줄(자격·학력·근무 조건)을 옮긴다 — 긴 공고는 자격요건이 뒤에 있다.
+  // 맞은 줄만 고르면 바로 뒤의 "예외: …도 지원 가능" 같은 단서가 떨어져 제한이 원문보다 강해지므로 뒤 2줄을 같이 옮긴다
   const CONDITION_RE = /자격|요건|우대|학력|학년|학기|졸업|재학|휴학|전공|어학|근무\s*(지|기간|형태|시간|조건)|기간|채용\s*형태|전환|Qualif|Require|Eligib|graduat|student|degree/i;
+  const CONTEXT_AFTER = 2;
   function conditionLines(rest, max = 1500) {
+    const ls = rest.split("\n");
+    const keep = new Set();
+    ls.forEach((ln, i) => {
+      if (CONDITION_RE.test(ln)) for (let j = i; j <= Math.min(i + CONTEXT_AFTER, ls.length - 1); j++) keep.add(j);
+    });
     const out = [];
     let size = 0;
-    for (const ln of rest.split("\n")) {
-      if (!CONDITION_RE.test(ln) || size + ln.length > max) continue;
-      out.push(ln);
-      size += ln.length;
+    let prev = -1;
+    for (const i of [...keep].sort((a, b) => a - b)) {
+      if (!ls[i].trim()) continue;
+      if (size + ls[i].length > max) {
+        out.push("(옮길 줄이 더 있지만 길이 제한으로 생략 — 원문 확인)");
+        break;
+      }
+      if (out.length && i - 1 !== prev) out.push("…"); // 떨어진 줄 사이
+      out.push(ls[i]);
+      prev = i;
+      size += ls[i].length;
     }
     return out.join("\n");
   }
@@ -309,6 +333,15 @@
   // ── 브라우저: 북마크로 실행 ──────────────────────────────────────────────
   const SEEN_KEY = "snu-internwatch:seen";
   const LAST_KEY = "snu-internwatch:last"; // 마지막으로 만든 파일 — 받기 전에 패널을 닫아도 다시 받을 수 있게
+  const FAILED_KEY = "snu-internwatch:failed"; // 상세를 못 받은 공고 — 다음 실행 때 목록보다 먼저 다시 받는다
+
+  function loadFailed() {
+    try {
+      return JSON.parse(localStorage.getItem(FAILED_KEY) || "[]");
+    } catch {
+      return [];
+    }
+  }
 
   function loadSeen() {
     try {
@@ -440,8 +473,10 @@
       if (pages.length) saveBlob(new Blob([jpegsToPdf(pages)], { type: "application/pdf" }), name);
       b.textContent = failed.length ? `못 받은 ${failed.length}장 다시 시도` : `${name} 받음 (${pages.length}쪽)`;
       b.disabled = !failed.length;
-      if (failed.length) note.textContent = `못 받은 포스터: ${failed.join(", ")}` + (pages.length ? ` (나머지 ${pages.length}쪽은 PDF로 받음)` : "") +
-        ". GPT는 PDF에 쪽이 없는 공고를 '직접 확인'으로 둡니다.";
+      note.textContent = failed.length
+        ? `못 받은 포스터: ${failed.join(", ")}` + (pages.length ? ` (나머지 ${pages.length}쪽은 PDF로 받음)` : "") +
+          ". GPT는 PDF에 쪽이 없는 공고를 '직접 확인'으로 둡니다."
+        : `포스터 ${targets.length}장을 모두 담았습니다. 이전에 받은 PDF 대신 방금 받은 ${name}을 올리세요.`;
     });
     row.append(b, note);
     ui.box.querySelector("[data-files]").appendChild(row);
@@ -453,6 +488,7 @@
       if (b.dataset.armed) {
         localStorage.removeItem(SEEN_KEY);
         localStorage.removeItem(LAST_KEY);
+        localStorage.removeItem(FAILED_KEY);
         b.textContent = "지웠습니다 — 다음 실행은 처음부터";
         b.disabled = true;
       } else {
@@ -482,10 +518,12 @@
           return res.text();
         },
         sleep: (ms) => new Promise((ok) => setTimeout(ok, ms)),
-        seen, today, onProgress: ui.msg,
+        seen, today, retry: loadFailed(), onProgress: ui.msg,
       });
       for (const p of [...r.postings, ...r.skipped]) seen.add(p.id); // failed는 넣지 않는다 — 다음에 다시 받는다
       saveSeen(seen);
+      localStorage.setItem(FAILED_KEY, JSON.stringify(r.failed.map(({ id, title, url, company, category, posted, deadline }) =>
+        ({ id, title, url, company, category, posted, deadline }))));
       const notes = [];
       if (r.skipped.length) notes.push(`마감 지난 ${r.skipped.length}건 건너뜀`);
       if (r.failed.length) notes.push(`상세를 못 받은 ${r.failed.length}건은 다음 실행 때 다시 받음`);
